@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block title %}Live Monitor{% endblock %}
+
+{% block content %}
+
+<!-- PAGE HEADER -->
+<div class="page-header">
+  <div>
+    <h1 class="page-title">📡 Live Monitor</h1>
+    <p class="page-sub">Real-time fault detection across Ghana's power grid nodes</p>
+  </div>
+  <div class="control-bar">
+    <div class="stat-pill">
+      <span class="stat-label">Total Faults</span>
+      <span class="stat-value" id="total-faults">0</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-label">Elapsed</span>
+      <span class="stat-value" id="elapsed">00:00:00</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-label">ML Engine</span>
+      <span class="stat-value" id="ml-status">Warming up…</span>
+    </div>
+    <button class="btn btn-start" id="btn-start" onclick="startSim()">▶ Start</button>
+    <button class="btn btn-stop" id="btn-stop" onclick="stopSim()" disabled>■ Stop</button>
+  </div>
+</div>
+
+<!-- NODE CARDS -->
+<section class="section-label">Grid Nodes</section>
+<div class="node-grid" id="node-grid">
+  <!-- Populated by JS -->
+  <div class="node-card skeleton"></div>
+  <div class="node-card skeleton"></div>
+  <div class="node-card skeleton"></div>
+  <div class="node-card skeleton"></div>
+  <div class="node-card skeleton"></div>
+</div>
+
+<!-- LIVE FAULT FEED -->
+<section class="section-label">
+  Live Fault Feed
+  <span class="badge" id="fault-count">0 faults</span>
+</section>
+
+<div class="fault-feed" id="fault-feed">
+  <div class="fault-empty" id="fault-empty">
+    <span>No faults detected yet. Start the simulation to begin monitoring.</span>
+  </div>
+</div>
+
+{% endblock %}
+
+
+{% block scripts %}
+<script>
+// ── SIMULATION CONTROLS ───────────────────────────────────────────────────
+async function startSim() {
+  await fetch("/api/start", { method: "POST" });
+  document.getElementById("btn-start").disabled = true;
+  document.getElementById("btn-stop").disabled  = false;
+  document.getElementById("btn-start").classList.add("disabled");
+  document.getElementById("btn-stop").classList.remove("disabled");
+}
+
+async function stopSim() {
+  await fetch("/api/stop", { method: "POST" });
+  document.getElementById("btn-start").disabled = false;
+  document.getElementById("btn-stop").disabled  = true;
+  document.getElementById("btn-start").classList.remove("disabled");
+  document.getElementById("btn-stop").classList.add("disabled");
+}
+
+// ── STATUS COLOURS ────────────────────────────────────────────────────────
+function statusClass(status) {
+  return { normal: "status-normal", warning: "status-warning", fault: "status-fault" }[status] || "";
+}
+
+function statusIcon(status) {
+  return { normal: "✅", warning: "⚠️", fault: "🔴" }[status] || "●";
+}
+
+function severityClass(severity) {
+  return { low: "sev-low", medium: "sev-medium", high: "sev-high" }[severity] || "";
+}
+
+// ── NODE CARDS ────────────────────────────────────────────────────────────
+function renderNodes(nodes) {
+  const grid = document.getElementById("node-grid");
+  if (!nodes.length) return;
+
+  grid.innerHTML = nodes.map(node => {
+    const sc      = statusClass(node.status);
+    const icon    = statusIcon(node.status);
+    const issues  = node.issues_explained || [];
+
+    const issuesHtml = issues.length
+      ? issues.map(i => `
+          <div class="issue-row ${severityClass(i.severity)}">
+            <div class="issue-header">
+              <span class="issue-tag">${i.severity_label}</span>
+              <span class="issue-type">${i.fault_type}</span>
+            </div>
+            <p class="issue-explanation">${i.explanation}</p>
+          </div>
+        `).join("")
+      : `<p class="no-issues">No issues detected at this node.</p>`;
+
+    return `
+      <div class="node-card ${sc}">
+        <div class="node-card-header">
+          <div>
+            <div class="node-name">${node.node_name}</div>
+            <div class="node-status-label">${icon} ${node.status.toUpperCase()}</div>
+          </div>
+          <div class="node-badge ${sc}">${node.status}</div>
+        </div>
+
+        <div class="readings-grid">
+          <div class="reading-item">
+            <span class="reading-label">Voltage</span>
+            <span class="reading-value ${sc}">${node.voltage ? node.voltage.toFixed(1) + ' V' : '—'}</span>
+          </div>
+          <div class="reading-item">
+            <span class="reading-label">Current</span>
+            <span class="reading-value ${sc}">${node.current ? node.current.toFixed(1) + ' A' : '—'}</span>
+          </div>
+          <div class="reading-item">
+            <span class="reading-label">Frequency</span>
+            <span class="reading-value ${sc}">${node.frequency ? node.frequency.toFixed(2) + ' Hz' : '—'}</span>
+          </div>
+        </div>
+
+        <div class="node-explanation">${node.status_explanation || ''}</div>
+
+        <div class="issues-section">
+          ${issuesHtml}
+        </div>
+
+        ${node.ml_ready
+          ? '<div class="ml-badge">🧠 ML Active</div>'
+          : '<div class="ml-badge ml-training">🧠 Training…</div>'}
+      </div>
+    `;
+  }).join("");
+}
+
+// ── FAULT FEED ────────────────────────────────────────────────────────────
+let _knownFaults = new Set();
+
+function renderFaults(faults) {
+  const feed  = document.getElementById("fault-feed");
+  const empty = document.getElementById("fault-empty");
+  const badge = document.getElementById("fault-count");
+
+  badge.textContent = `${faults.length} fault${faults.length !== 1 ? 's' : ''}`;
+
+  if (!faults.length) {
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+
+  // Only prepend new faults
+  faults.forEach(fault => {
+    const key = `${fault.time}-${fault.node_name}-${fault.fault_type}`;
+    if (_knownFaults.has(key)) return;
+    _knownFaults.add(key);
+
+    const card = document.createElement("div");
+    card.className = `fault-card ${severityClass(fault.severity)} fade-in`;
+    card.innerHTML = `
+      <div class="fault-card-header">
+        <div class="fault-meta">
+          <span class="fault-time">🕐 ${fault.time}</span>
+          <span class="fault-node">📍 ${fault.node_name}</span>
+          <span class="fault-tag ${severityClass(fault.severity)}">${fault.severity_label}</span>
+        </div>
+        <span class="fault-type-label">${fault.fault_type}</span>
+      </div>
+      <p class="fault-explanation">${fault.explanation}</p>
+    `;
+
+    // Prepend so newest is on top
+    if (feed.firstChild && feed.firstChild.id === "fault-empty") {
+      feed.insertBefore(card, feed.firstChild.nextSibling);
+    } else {
+      feed.insertBefore(card, feed.firstChild);
+    }
+
+    // Keep feed manageable
+    while (feed.children.length > 51) {
+      feed.removeChild(feed.lastChild);
+    }
+  });
+}
+
+// ── STATUS POLL ───────────────────────────────────────────────────────────
+async function pollStatus() {
+  try {
+    const res  = await fetch("/api/status");
+    const data = await res.json();
+    document.getElementById("total-faults").textContent = data.total_faults;
+    document.getElementById("elapsed").textContent      = data.elapsed;
+  } catch {}
+}
+
+// ── NODE POLL ─────────────────────────────────────────────────────────────
+async function pollNodes() {
+  try {
+    const res   = await fetch("/api/nodes");
+    const nodes = await res.json();
+
+    // Update ML status
+    const mlReady = nodes.filter(n => n.ml_ready).length;
+    const mlEl    = document.getElementById("ml-status");
+    if (mlReady === nodes.length && nodes.length > 0) {
+      mlEl.textContent = "Active ✓";
+      mlEl.style.color = "var(--green)";
+    } else {
+      mlEl.textContent = `Training (${mlReady}/${nodes.length})`;
+      mlEl.style.color = "var(--yellow)";
+    }
+
+    renderNodes(nodes);
+  } catch {}
+}
+
+// ── FAULT POLL ────────────────────────────────────────────────────────────
+async function pollFaults() {
+  try {
+    const res    = await fetch("/api/faults");
+    const faults = await res.json();
+    renderFaults(faults);
+  } catch {}
+}
+
+// ── START POLLING ─────────────────────────────────────────────────────────
+pollStatus();
+pollNodes();
+pollFaults();
+
+setInterval(pollStatus, 2000);
+setInterval(pollNodes, 1500);
+setInterval(pollFaults, 1500);
+</script>
+{% endblock %}

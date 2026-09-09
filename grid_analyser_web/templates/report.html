@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Report{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1 class="page-title">📄 Session Report</h1>
+    <p class="page-sub">Plain English summary of grid performance and fault activity</p>
+  </div>
+  <div class="control-bar">
+    <button class="btn btn-primary" onclick="generateReport()">🔄 Generate Report</button>
+    <a class="btn btn-outline" href="/api/export/csv" download>⬇ Export CSV</a>
+  </div>
+</div>
+
+<!-- REPORT PLACEHOLDER -->
+<div id="report-placeholder" class="report-placeholder">
+  <div class="placeholder-icon">📋</div>
+  <p>Click <strong>Generate Report</strong> to analyse the current session data.</p>
+  <p class="placeholder-sub">The report will show plain English explanations of what happened at each grid node.</p>
+</div>
+
+<!-- REPORT CONTENT (hidden until generated) -->
+<div id="report-content" style="display:none;">
+
+  <!-- SUMMARY BANNER -->
+  <div class="report-banner" id="report-banner"></div>
+
+  <!-- NODE SUMMARIES -->
+  <section class="section-label">Node-by-Node Summary</section>
+  <div class="report-node-grid" id="report-nodes"></div>
+
+  <!-- RECENT FAULTS TABLE -->
+  <section class="section-label">
+    Recent Fault Log
+    <span class="badge" id="report-fault-count"></span>
+  </section>
+
+  <div class="fault-table-wrap">
+    <table class="fault-table" id="fault-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Node</th>
+          <th>Fault Type</th>
+          <th>Severity</th>
+          <th>What it means</th>
+          <th>Resolved</th>
+        </tr>
+      </thead>
+      <tbody id="fault-table-body"></tbody>
+    </table>
+  </div>
+
+  <div class="report-footer" id="report-footer"></div>
+</div>
+
+{% endblock %}
+
+
+{% block scripts %}
+<script>
+function severityClass(s) {
+  return { low: "sev-low", medium: "sev-medium", high: "sev-high" }[s] || "";
+}
+
+function nodeStatusClass(total, high) {
+  if (high > 0)   return "report-node-fault";
+  if (total > 0)  return "report-node-warning";
+  return "report-node-normal";
+}
+
+async function generateReport() {
+  const btn = document.querySelector(".btn-primary");
+  btn.textContent = "⏳ Generating…";
+  btn.disabled = true;
+
+  try {
+    const res  = await fetch("/api/report");
+    const data = await res.json();
+    renderReport(data);
+  } catch (e) {
+    alert("Could not generate report. Make sure the simulation has been run.");
+  } finally {
+    btn.textContent = "🔄 Generate Report";
+    btn.disabled = false;
+  }
+}
+
+function renderReport(data) {
+  document.getElementById("report-placeholder").style.display = "none";
+  document.getElementById("report-content").style.display     = "block";
+
+  // Banner
+  const total  = data.total_faults;
+  const banner = document.getElementById("report-banner");
+  banner.innerHTML = `
+    <div class="banner-grid">
+      <div class="banner-stat">
+        <span class="banner-num">${data.node_summaries.length}</span>
+        <span class="banner-label">Nodes Monitored</span>
+      </div>
+      <div class="banner-stat">
+        <span class="banner-num">${total}</span>
+        <span class="banner-label">Total Faults</span>
+      </div>
+      <div class="banner-stat">
+        <span class="banner-num">${data.session_elapsed}</span>
+        <span class="banner-label">Session Duration</span>
+      </div>
+      <div class="banner-stat">
+        <span class="banner-num">${data.generated_at}</span>
+        <span class="banner-label">Generated At</span>
+      </div>
+    </div>
+    <p class="banner-summary">
+      ${total === 0
+        ? "✅ No faults were recorded during this session. All monitored nodes operated within safe limits."
+        : `⚠️ A total of <strong>${total} fault${total !== 1 ? 's' : ''}</strong> were detected across the monitored grid nodes during this session. Review the node summaries below for details.`
+      }
+    </p>
+  `;
+
+  // Node summaries
+  const nodeGrid = document.getElementById("report-nodes");
+  nodeGrid.innerHTML = data.node_summaries.map(node => {
+    const cls  = nodeStatusClass(node.total, node.faults.high);
+    const icon = node.total === 0 ? "✅" : node.faults.high > 0 ? "🔴" : "⚠️";
+    return `
+      <div class="report-node-card ${cls}">
+        <div class="report-node-header">
+          <span class="report-node-icon">${icon}</span>
+          <div>
+            <div class="report-node-name">${node.node_name}</div>
+            <div class="report-node-region">${node.region}</div>
+          </div>
+          <div class="report-node-total">${node.total} fault${node.total !== 1 ? 's' : ''}</div>
+        </div>
+
+        <div class="fault-pills">
+          <span class="pill sev-high">${node.faults.high} Critical</span>
+          <span class="pill sev-medium">${node.faults.medium} Moderate</span>
+          <span class="pill sev-low">${node.faults.low} Minor</span>
+        </div>
+
+        <p class="report-node-explanation">${node.plain_english}</p>
+      </div>
+    `;
+  }).join("");
+
+  // Fault table
+  document.getElementById("report-fault-count").textContent =
+    `${data.recent_faults.length} shown`;
+
+  const tbody = document.getElementById("fault-table-body");
+  if (!data.recent_faults.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="table-empty">No faults recorded.</td></tr>`;
+  } else {
+    tbody.innerHTML = data.recent_faults.map(f => `
+      <tr class="${severityClass(f.severity)}">
+        <td class="mono">${f.time}</td>
+        <td>${f.node_name}</td>
+        <td>${f.fault_type}</td>
+        <td><span class="fault-tag ${severityClass(f.severity)}">${f.severity_label}</span></td>
+        <td class="explanation-cell">${f.explanation}</td>
+        <td>${f.resolved ? "✅ Yes" : "⏳ No"}</td>
+      </tr>
+    `).join("");
+  }
+
+  // Footer
+  document.getElementById("report-footer").innerHTML = `
+    <p>Report generated at <strong>${data.generated_at}</strong> — Grid Analyser by Boundcraft</p>
+    <a class="btn btn-outline" href="/api/export/csv" download>⬇ Download Full CSV</a>
+  `;
+}
+</script>
+{% endblock %}

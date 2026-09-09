@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Grid Analyser — {% block title %}{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+</head>
+<body>
+
+  <!-- NAVBAR -->
+  <nav class="navbar">
+    <div class="nav-brand">
+      <span class="nav-icon">⚡</span>
+      <div>
+        <span class="nav-title">Grid Analyser</span>
+        <span class="nav-sub">Ghana Power Grid Fault Detection</span>
+      </div>
+    </div>
+
+    <div class="nav-links">
+      <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">
+        📡 Live Monitor
+      </a>
+      <a href="/report" class="nav-link {% if request.path == '/report' %}active{% endif %}">
+        📄 Report
+      </a>
+    </div>
+
+    <div class="nav-right">
+      <div class="sim-status" id="nav-status">
+        <span class="status-dot" id="nav-dot">●</span>
+        <span id="nav-status-text">Idle</span>
+      </div>
+      <button class="theme-toggle" id="theme-toggle" title="Toggle dark/light mode">
+        <span id="theme-icon">🌙</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- PAGE CONTENT -->
+  <main class="main-content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <span>Grid Analyser &copy; 2026 — Boundcraft</span>
+    <span class="footer-muted">Built for Ghana's power infrastructure</span>
+  </footer>
+
+  <script>
+    // ── THEME TOGGLE ─────────────────────────────────────────────────────────
+    const html        = document.documentElement;
+    const themeBtn    = document.getElementById("theme-toggle");
+    const themeIcon   = document.getElementById("theme-icon");
+    const savedTheme  = localStorage.getItem("ga-theme") || "light";
+
+    html.setAttribute("data-theme", savedTheme);
+    themeIcon.textContent = savedTheme === "dark" ? "☀️" : "🌙";
+
+    themeBtn.addEventListener("click", () => {
+      const current = html.getAttribute("data-theme");
+      const next    = current === "light" ? "dark" : "light";
+      html.setAttribute("data-theme", next);
+      localStorage.setItem("ga-theme", next);
+      themeIcon.textContent = next === "dark" ? "☀️" : "🌙";
+    });
+
+    // ── NAVBAR STATUS POLL ────────────────────────────────────────────────────
+    async function pollNavStatus() {
+      try {
+        const res  = await fetch("/api/status");
+        const data = await res.json();
+        const dot  = document.getElementById("nav-dot");
+        const txt  = document.getElementById("nav-status-text");
+        if (data.running) {
+          dot.style.color = "var(--green)";
+          txt.textContent = `Running — ${data.elapsed}`;
+        } else {
+          dot.style.color = "var(--muted)";
+          txt.textContent = "Idle";
+        }
+      } catch {}
+    }
+    pollNavStatus();
+    setInterval(pollNavStatus, 2000);
+  </script>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>
