@@ -60,9 +60,7 @@ python main.py
 - [ ] Deploy across a local multi-node `kind` Kubernetes cluster (provisioned via Terraform) to simulate distributed substation nodes
 - [ ] Add a resilience / self-healing demo
 
-## License
 
-Add a license of your choice (MIT is a common default for portfolio projects).
 
 ## Author
 
