@@ -64,4 +64,4 @@ python main.py
 
 ## Author
 
-Built by Cami, part of the [Boundcraft](#) project ecosystem.
+Built by Camillus Kofi Ampadu, part of the [Boundcraft](#) project ecosystem.
